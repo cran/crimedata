@@ -1,9 +1,12 @@
 #' Get Data from the Open Crime Database
 #'
-#' Retrieves data from the Open Crime Database for the specified years.
+#' Retrieves data from the Open Crime Database for the specified years. Latitude
+#' and longitude are specified using the WGS 84 (EPSG:4326) co-ordinate
+#' reference system.
 #'
-#' By default this function returns a 1% sample of the 'core' data. This is the
-#' default to minimize accidentally requesting large files over a network.
+#' By default this function returns a one-percent sample of the 'core' data.
+#' This is the default to minimize accidentally requesting large files over a
+#' network.
 #'
 #' Setting type = "core" retrieves the core fields (e.g. the type, co-ordinates
 #' and date/time of each offense) for each offense.
@@ -16,6 +19,9 @@
 #' memory capacity. Consider downloading smaller quantities of data (e.g. using
 #' type = "sample") for exploratory analysis.
 #'
+#' Setting output = "sf" returns the data in simple features format by calling
+#' \code{\link[sf:st_as_sf]{sf::st_as_sf(..., crs = 4326, remove = FALSE)}}
+#'
 #' @param years A single integer or vector of integers specifying the years for
 #'   which data should be retrieved. If NULL (the default), data for the most
 #'   recent year will be returned.
@@ -27,6 +33,9 @@
 #'   called again with the same arguments?
 #' @param quiet Should messages and warnings relating to data availability and
 #'   processing be suppressed?
+#' @param output Should the data be returned as a tibble by specifying "tbl"
+#'   (the default) or as a simple features (SF) object using WGS 84 by
+#'   specifying "sf"?
 #'
 #' @return A tibble containing data from the Open Crime Database.
 #' @export
@@ -41,14 +50,16 @@
 #' @import dplyr
 #' @import readr
 #' @import purrr
+#' @import sf
 get_crime_data <- function (years = NULL, cities = NULL, type = "sample",
-                            cache = TRUE, quiet = FALSE) {
+                            cache = TRUE, quiet = FALSE, output = "tbl") {
 
   # check for errors
   stopifnot(type %in% c("core", "extended", "sample"))
   stopifnot(is.character(cities) | is.null(cities))
   stopifnot(is.integer(as.integer(years)) | is.null(years))
   stopifnot(is.logical(quiet))
+  stopifnot(output %in% c("tbl", "sf"))
 
   # get tibble of available data
   urls <- get_file_urls(quiet = quiet)
@@ -77,7 +88,7 @@ get_crime_data <- function (years = NULL, cities = NULL, type = "sample",
   }
 
   # check if all specified cities are available
-  if (cities != "all" & !all(cities %in% unique(urls$city))) {
+  if (cities[1] != "all" & !all(cities %in% unique(urls$city))) {
     stop("One or more of the specified cities does not correspond to a city ",
          "for which data are available in the Open Crime Database. Check your ",
          "spelling or for details of available data, see ",
@@ -179,6 +190,36 @@ get_crime_data <- function (years = NULL, cities = NULL, type = "sample",
 
     # store data in cache
     saveRDS(crime_data, cache_file)
+
+  }
+
+  # convert to SF format if necessary
+  if (output == "sf") {
+
+    crime_data <- sf::st_as_sf(crime_data, coords = c("longitude", "latitude"),
+                               crs = 4326, remove = FALSE)
+
+  }
+
+  # chang type of some variables
+  crime_data <- dplyr::mutate_at(
+    crime_data,
+    vars(one_of(c("city_name", "offense_code", "offense_type", "offense_group",
+                  "offense_against", "location_type", "location_category"))),
+    as.factor
+  )
+  crime_data <- dplyr::mutate_at(
+    crime_data,
+    vars("date_single"),
+    as.POSIXct, format = "%Y-%m-%d %H:%M"
+  )
+  if ("date_start" %in% names(crime_data) | "date_end" %in% names(crime_data)) {
+
+    crime_data <- dplyr::mutate_at(
+      crime_data,
+      vars(one_of(c("date_start", "date_end"))),
+      as.POSIXct, format = "%Y-%m-%d %H:%M"
+    )
 
   }
 
