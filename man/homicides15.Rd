@@ -4,7 +4,8 @@
 \name{homicides15}
 \alias{homicides15}
 \title{Homicides in nine cities in 2015}
-\format{A tibble with 1,922 rows and 15 variables:
+\format{
+A tibble with 1,922 rows and 15 variables:
 \describe{
   \item{uid}{an integer unique identifier for the offense}
   \item{city_name}{name of the city in which the crime occurred}
@@ -17,11 +18,13 @@
   \item{location_type}{type of location*}
   \item{location_category}{category of location type*}
   \item{fips_state}{two-digit FIPS state code (possibly with leading zero)}
-  \item{fips_county}{three-digit FIPS county code (possibly with leading zero)}
+  \item{fips_county}{three-digit FIPS county code (possibly with leading
+    zero)}
   \item{tract}{six-digit code for 2016 census tract}
   \item{block_group}{one-digit code for 2016 census block group}
   \item{block}{four-digit code for 2016 census block}
-}}
+}
+}
 \source{
 \url{https://osf.io/zyaqn/}
 }
@@ -34,7 +37,7 @@ obtained from the \href{https://osf.io/zyaqn/}{Crime Open Database}.
 }
 \details{
 More details of the data format are available on the
-\href{https://osf.io/zyaqn/wiki/}{Crime Open Database website}.
+\href{https://osf.io/zyaqn/wiki/home/}{Crime Open Database website}.
 Variables marked * are only available for some of the
 data, due to limitations in the data published by some cities.
 

@@ -3,11 +3,20 @@
 #' URLs are either obtained from the OSF API or, if a cached version exists,
 #' from the cache.
 #'
+#' @param cache Should the result be cached and then re-used if the function is
+#'   called again with the same arguments?
 #' @param quiet Should messages and warnings relating to data availability be
 #'   suppressed?
 #'
-#' @import digest
-get_file_urls <- function (quiet = FALSE) {
+#' @noRd
+#'
+get_file_urls <- function(cache = TRUE, quiet = FALSE) {
+
+  # Check inputs
+  if (!rlang::is_logical(cache, n = 1))
+    rlang::abort("`cache` must be `TRUE` or `FALSE`")
+  if (!rlang::is_logical(quiet, n = 1))
+    rlang::abort("`quiet` must be `TRUE` or `FALSE`")
 
   # set path for cache file
   cache_file <- paste0(tempdir(), "/crimedata_urls_",
@@ -17,21 +26,26 @@ get_file_urls <- function (quiet = FALSE) {
   if (
     file.exists(cache_file)
     & file.mtime(cache_file) > Sys.time() - 60 * 60 * 24
+    & cache == TRUE
   ) {
 
     # get URLs from cache
     urls <- readRDS(cache_file)
 
     if (quiet == FALSE) {
-      message("Using cached URLs to get data from server. These URLs rarely ",
-              "change and this is almost certainly safe.", appendLF = TRUE)
+      rlang::inform(c(
+        "Using cached URLs to get data from server.",
+        "i" = "These URLs rarely change and this is almost certainly safe."
+      ))
     }
 
   } else {
 
     if (quiet == FALSE) {
-      message("Downloading list of URLs for data files. This takes a few ",
-              "seconds but is only done once per session.", appendLF = TRUE)
+      rlang::inform(c(
+        "Downloading list of URLs for data files.",
+        "i" = "This takes a few seconds but is only done once per session."
+      ))
     }
 
     # get URLs from server
@@ -52,73 +66,85 @@ get_file_urls <- function (quiet = FALSE) {
 #' Fetch the URLs of crime data files from the Crime Open Database server,
 #' together with the type of data in the file and the year the data is for.
 #'
-#' @return a tibble with three columns: type, year and file_url
+#' @return a tibble with four columns: `data_type`, `city`, `year` and
+#'   `file_url`
 #'
-#' @import dplyr
-#' @import httr
-#' @import tibble
-#' @import purrr
-#' @import stringr
-fetch_file_urls <- function () {
+#' @noRd
+#'
+fetch_file_urls <- function() {
 
-  # create an empty tibble in which to store the result
-  values <- tibble::tibble(type = character(), year = character(),
-                           file_url = character())
+  # Retrieve data types separtely because there seems to be some undocumented
+  # limit on the number of files returned by each API call, even with pagination
+  urls <- c(
+    "https://api.osf.io/v2/nodes/zyaqn/files/osfstorage/5bbde32b7cb18100193c778a/?filter[name]=core",
+    "https://api.osf.io/v2/nodes/zyaqn/files/osfstorage/5bbde32b7cb18100193c778a/?filter[name]=extended",
+    "https://api.osf.io/v2/nodes/zyaqn/files/osfstorage/5bbde32b7cb18100193c778a/?filter[name]=sample"
+  )
 
-  # specify the URL of the API end point
-  page_url <- paste0("https://api.osf.io/v2/nodes/zyaqn/files/osfstorage/",
-                     "5bbde32b7cb18100193c778a/?format=json")
+  json_values <- purrr::map(urls, function(x) {
 
-  # fetch paginated results until there are none left, at which point page_url
-  # will be NULL
-  while (!is.null(page_url)) {
+    page_url <- x
 
-    # get a page of JSON results from the server, throwing an error if the
-    # HTTP status suggests a problem
-    json <- httr::GET(page_url) %>%
-      httr::stop_for_status() %>%
-      httr::content(as = "parsed", type = "application/json")
+    # Create an empty list to store result
+    values <- list()
 
-    # extract the data as a tibble
-    result <- purrr::map_df(json$data, function (x) {
+    while (!is.null(page_url)) {
 
-      # parse the file name into type and year
-      file_name <- stringr::str_match(
-        x$attributes$name,
-        paste0("^crime_open_database_(core|extended|sample)_(.+)_(\\d+).Rds$")
-      ) %>%
-        as.character()
+      # Get JSON data
+      json <- httr::content(
+        httr::stop_for_status(httr::GET(page_url)),
+        as = "parsed",
+        type = "application/json"
+      )
 
-      # extract city_name
-      city_name <- stringr::str_to_title(stringr::str_replace_all(file_name[3],
-                                                                  "_", " "))
+      # Update the URL to the next page (or NULL if this is the last page)
+      page_url <- json$links[["next"]]
+
+      # Add results to existing object
+      values <- c(values, json$data)
+
+    }
+
+    # Return list of JSON objects
+    values
+
+  })
+
+  values <- purrr::map_dfr(json_values, function(x) {
+
+    purrr::map_dfr(x, function(y) {
+
+      # Parse the file name into type and year
+      file_name <- as.character(stringr::str_match(
+        y$attributes$name,
+        "^crime_open_database_(core|extended|sample)_(.+)_(\\d+).Rds$"
+      ))
+
+      # Extract city_name
+      city_name <- stringr::str_to_title(
+        stringr::str_replace_all(file_name[3], "_", " ")
+      )
       if (city_name == "All") {
-        city_name <- "all cities"
+        city_name <- "All cities"
       }
 
-      # return a list of data for this file
+      # Return a list of data for this file
       list(
         data_type = file_name[2],
         city = city_name,
         year = file_name[4],
-        file_url = x$links$download
+        file_url = y$links$download
       )
 
     })
 
-    # combine the new data with any existing data
-    values <- rbind(values, result)
-
-    # update the URL to the next page (or NULL if this is the last page)
-    page_url <- json$links[["next"]]
-
-  }
+  })
 
   # convert year from character to integer
   values$year <- as.integer(values$year)
 
   # return tibble of links
-  dplyr::arrange(values, .data$data_type, .data$city, .data$year)
+  values[order(values$data_type, values$city, values$year), ]
 
 }
 
@@ -133,16 +159,32 @@ fetch_file_urls <- function () {
 #'
 #' @return A tibble
 #'
+#' @examples
+#' \donttest{
+#' list_crime_data()
+#' }
+#'
 #' @export
 #'
-#' @import dplyr
-list_crime_data <- function (quiet = FALSE) {
+list_crime_data <- function(quiet = FALSE) {
 
-  get_file_urls(quiet = quiet) %>%
-    dplyr::group_by(.data$city) %>%
-    dplyr::summarise(year_min = min(.data$year),
-                     year_max = max(.data$year)) %>%
-    dplyr::mutate(years = paste(.data$year_min, "to", .data$year_max)) %>%
-    dplyr::select(.data$city, .data$years)
+  # Get DF of URLs
+  urls <- get_file_urls(quiet = quiet)
+
+  # Calculate first and last years of data for each city
+  first_last_years <- cbind(
+    stats::aggregate(year ~ city, data = urls, FUN = min),
+    stats::aggregate(year ~ city, data = urls, FUN = max)
+  )[, c(1, 2, 4)]
+
+  # Format those years into a character value
+  first_last_years$years <- paste(
+    first_last_years$year,
+    "to",
+    first_last_years$year.1
+  )
+
+  # Return result
+  first_last_years[, c("city", "years")]
 
 }
